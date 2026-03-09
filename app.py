@@ -124,3 +124,73 @@ if st.button("Predict Outcome"):
         else:
             st.success("✅ STANDARD REGIMEN")
             st.write("Patient likely to respond well to standard First-Line treatment.")
+            
+# --- 6. BATCH PREDICTION (FILE UPLOAD) ---
+st.divider()
+st.header("📂 Batch Clinical Processor")
+st.markdown("Upload patient records for automated risk stratification and clinical advice.")
+
+uploaded_file = st.file_uploader("Upload CSV for Bulk Analysis", type="csv")
+
+if uploaded_file is not None:
+    try:
+        # Load the uploaded dataset
+        batch_df = pd.read_csv(uploaded_file)
+        
+        # Required columns for the model
+        required_cols = ['Age', 'Gender', 'Residence', 'BMI_Baseline', 'Diabetes_Status', 
+                         'HbA1c_Level', 'Smoking_Status', 'Alcohol_Frequency']
+        
+        if all(col in batch_df.columns for col in required_cols):
+            processed_rows = []
+            advices = []
+            
+            for index, row in batch_df.iterrows():
+                # Process each row through our training logic
+                p_data = preprocess_input(
+                    row['Age'], row['Gender'], row['Residence'], 
+                    row['BMI_Baseline'], 
+                    "Yes" if row['Diabetes_Status'] == 1 else "No", 
+                    row['HbA1c_Level'], row['Smoking_Status'], row['Alcohol_Frequency']
+                )
+                processed_rows.append(p_data)
+                
+                # Logic for Clinical Advice
+                if row['HbA1c_Level'] > 7.0:
+                    advice = "Critical: Prioritize Glycemic Control."
+                elif row['BMI_Baseline'] < 18.5:
+                    advice = "Nutritional Intervention Required."
+                elif row['Smoking_Status'] == "Current" or row['Alcohol_Frequency'] == "Daily":
+                    advice = "Behavioral Counseling & DOTS Plus."
+                else:
+                    advice = "Routine Monitoring (Standard Regimen)."
+                advices.append(advice)
+            
+            # Combine and Predict
+            final_batch_df = pd.concat(processed_rows, ignore_index=True)
+            batch_probs = model.predict_proba(final_batch_df)[:, 1]
+            
+            # Enrich the DataFrame
+            batch_df['Success_Rate_%'] = (batch_probs * 100).round(2)
+            batch_df['Risk_Level'] = ["Low" if p >= 0.7 else "Moderate" if p >= 0.5 else "High" for p in batch_probs]
+            batch_df['Clinical_Suggestion'] = advices
+            
+            # UI: Results Summary
+            st.success(f"Batch Analysis Complete: {len(batch_df)} Patients Screened.")
+            
+            # UI: Styled Dataframe
+            st.dataframe(batch_df[['Age', 'Gender', 'Success_Rate_%', 'Risk_Level', 'Clinical_Suggestion']])
+            
+            # Download Section
+            csv_output = batch_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Clinical Report (CSV)",
+                data=csv_output,
+                file_name="NTEP_Smart_Predictor_Report.csv",
+                mime="text/csv",
+            )
+        else:
+            st.error(f"Missing Columns! Required: {required_cols}")
+            
+    except Exception as e:
+        st.error(f"Processing Error: {str(e)}")
