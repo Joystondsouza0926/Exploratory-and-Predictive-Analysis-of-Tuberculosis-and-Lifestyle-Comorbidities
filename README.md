@@ -1,98 +1,103 @@
-# Exploratory and Predictive Analysis of Tuberculosis and Lifestyle Comorbidities
+# 🩺 TB Risk Predictor
 
-## Overview
+**Exploratory and Predictive Analysis of Tuberculosis and Lifestyle Comorbidities**
 
-This project provides a comprehensive analysis of tuberculosis (TB) treatment outcomes with a focus on lifestyle comorbidities and predictive modeling. It includes exploratory data analysis, machine learning model development, and an interactive web application for clinical decision support.
+A Streamlit-based clinical decision support tool that predicts TB treatment outcomes and generates personalised clinical protocol reports using a Gradient Boosting machine learning model.
 
-## Features
+> Developed by **Joyston Jose D'souza**
 
-### 📊 Exploratory Data Analysis
-- Comprehensive analysis of TB patient data
-- Visualization of demographic and clinical patterns
-- Correlation analysis between lifestyle factors and treatment outcomes
-- Missing data imputation and preprocessing
+---
 
-### 🤖 Predictive Modeling
-- Binary classification of treatment success/failure
-- Multiple machine learning algorithms (Random Forest, Gradient Boosting, etc.)
-- Feature importance analysis
-- Model evaluation and validation
+## 📋 Features
 
-### 🏥 Clinical Decision Support App
-- Interactive Streamlit web application
-- Patient risk assessment tool
-- Personalized clinical recommendations
-- Dashboard for data visualization
-- Geographic analysis by state zones
+- **Single Patient Triage** — Enter patient demographics and comorbidity data to get an instant TB treatment outcome prediction with confidence score
+- **All Patient Records Table** — Every submitted patient is logged with a unique ID (TB-0001, TB-0002, …) and displayed in a persistent table with per-row **📄 Clinical Protocols Report** download
+- **Batch Prediction Upload** — Upload a CSV or Excel file to run bulk predictions on multiple patients at once
+- **Interactive EDA** — Visualise the training dataset with:
+  - Treatment outcome distribution
+  - BMI vs HbA1c scatter plot by outcome
+  - Syndemic factors correlation heatmap
+  - TB outcomes by State Zone (bar + pie charts)
+- **Clinical Protocols Page** — Personalised intervention recommendations based on the last patient's comorbidities (tobacco, diabetes, alcohol, BMI)
+- **Patient Database Management** — Download all records as CSV or delete all records from the sidebar
 
-## Dataset
+---
 
-The analysis uses a TB patient dataset (`TB.csv`) containing:
-- Demographic information (age, gender, residence, state zone)
-- Clinical markers (BMI, diabetes status, HbA1c levels, HIV status)
-- Lifestyle factors (smoking, alcohol consumption, cooking fuel)
-- Treatment outcomes and drug resistance patterns
-
-## Project Structure
+## 🗂️ Project Structure
 
 ```
-├── analytics.ipynb          # Jupyter notebook with EDA and modeling
-├── app.py                   # Streamlit web application
-├── TB.csv                   # Tuberculosis patient dataset
-└── README.md               # Project documentation
+├── app.py                  # Main Streamlit application
+├── best_tb_model.pkl       # Trained Gradient Boosting model
+├── TB.csv                  # Training dataset (for EDA)
+├── patient_records.csv     # Auto-generated persistent patient records
+├── requirements.txt        # Python dependencies
+└── README.md
 ```
 
-## Installation
+---
 
-1. Clone the repository
-2. Install required Python packages:
-   ```bash
-   pip install streamlit pandas numpy scikit-learn seaborn matplotlib plotly joblib imbalanced-learn
-   ```
+## ⚙️ Setup & Installation
 
-## Usage
-
-### Running the Analysis Notebook
+### 1. Clone the repository
 ```bash
-jupyter notebook analytics.ipynb
+git clone https://github.com/Joystondsouza0926/Exploratory-and-Predictive-Analysis-of-Tuberculosis-and-Lifestyle-Comorbidities.git
+cd Exploratory-and-Predictive-Analysis-of-Tuberculosis-and-Lifestyle-Comorbidities
 ```
 
-### Running the Web Application
+### 2. Install dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Run the app
 ```bash
 streamlit run app.py
 ```
 
-The application will be available at `http://localhost:8501`
+---
 
-## Key Findings
+## 🧠 Model Details
 
-- Lifestyle comorbidities significantly impact TB treatment outcomes
-- Diabetes and smoking are major risk factors for poor prognosis
-- Machine learning models achieve ~89% accuracy in predicting treatment success
-- Nutritional status (BMI) is a critical predictor of recovery
+| Attribute | Detail |
+|---|---|
+| Algorithm | Gradient Boosting Classifier |
+| Imbalance Handling | SMOTE (Synthetic Minority Oversampling) |
+| Input Features | Age, Gender, Residence, BMI, Diabetes Status, HbA1c, Smoking Status, Alcohol Frequency, State Zone |
+| Output | Binary: Success/Cured (1) or Poor Outcome/Failed (0) |
 
-## Clinical Recommendations
+---
 
-The application provides evidence-based recommendations for:
-- Treatment protocol intensification based on risk scores
-- Comorbidity management (diabetes, smoking cessation)
-- Nutritional support and lifestyle counseling
-- Monitoring frequency adjustments
+## 📥 Batch Upload Format
 
-## Technologies Used
+The batch CSV/Excel file must contain these columns:
 
-- **Python** for data analysis and modeling
-- **Pandas & NumPy** for data manipulation
-- **Scikit-learn** for machine learning
-- **Seaborn & Matplotlib** for visualization
-- **Streamlit** for web application
-- **Plotly** for interactive charts
-- **Joblib** for model serialization
+| Column | Values |
+|---|---|
+| `Age` | Integer (1–100) |
+| `Gender` | Male / Female / Transgender/Other |
+| `Residence` | Rural / Urban / Slum |
+| `BMI_Baseline` | Float |
+| `Diabetes_Status` | Yes / No |
+| `HbA1c_Level` | Float (0 = auto-impute) |
+| `Smoking_Status` | Never / Former / Current |
+| `Alcohol_Frequency` | Never / Occasional / Daily |
 
-## Contributing
+---
 
-Contributions are welcome! Please feel free to submit pull requests or open issues for improvements.
+## 📦 Dependencies
 
-## License
+| Package | Version |
+|---|---|
+| streamlit | ≥ 1.32.0 |
+| pandas | ≥ 2.0.0 |
+| numpy | ≥ 1.24.0 |
+| scikit-learn | ≥ 1.3.0 |
+| joblib | ≥ 1.3.0 |
+| plotly | ≥ 5.18.0 |
+| openpyxl | ≥ 3.1.0 |
 
-This project is intended for educational and research purposes in tuberculosis management and public health.
+---
+
+## 📄 License
+
+This project is developed for academic and research purposes under the NTEP (National Tuberculosis Elimination Programme) context.

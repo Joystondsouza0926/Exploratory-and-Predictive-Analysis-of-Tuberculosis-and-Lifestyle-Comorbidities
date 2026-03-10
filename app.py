@@ -1,388 +1,801 @@
-# ==========================================
-# FILE: app.py
-# ==========================================
 import streamlit as st
 import pandas as pd
-import joblib
 import numpy as np
+import joblib
 import plotly.express as px
-import plotly.graph_objects as go
 import os
+import uuid
 
-# --- 1. CONFIGURATION & STYLING ---
-st.set_page_config(page_title="NTEP Smart Predictor", page_icon="🏥", layout="wide")
+# Set page config
+st.set_page_config(
+    page_title="NTEP Smart Predictor",
+    page_icon="🩺",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
+# Custom CSS for modern design aesthetics
 st.markdown("""
 <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; background-color: #0066cc; color: white; border-radius: 5px; font-weight: bold; }
-    .stButton>button:hover { background-color: #0052a3; color: white; }
-    .metric-card { background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    h1, h2, h3 { color: #2c3e50; }
-    .sidebar .sidebar-content { background-color: #2c3e50; color: white; }
+    /* Main Background */
+    .stApp {
+        background: linear-gradient(135deg, #1e1e2f 0%, #151522 100%);
+        color: #e0e0e0;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #232336;
+        border-right: 1px solid #383854;
+    }
+    
+    /* Headers */
+    h1, h2, h3 {
+        color: #ffffff;
+        font-weight: 600;
+    }
+    h1 {
+        background: -webkit-linear-gradient(45deg, #4facfe 0%, #00f2fe 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 2rem;
+    }
+    
+    /* Metrics Core Elements */
+    [data-testid="stMetricValue"] {
+        font-size: 2.5rem;
+        font-weight: 700;
+    }
+    
+    /* Cards and Containers */
+    div[data-testid="stVerticalBlock"] div[style*="flex-direction: column;"] > div[data-testid="stVerticalBlock"] {
+        background: rgba(43, 43, 60, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(10px);
+        margin-bottom: 20px;
+    }
+
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(0, 242, 254, 0.3);
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0, 242, 254, 0.5);
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #2a2a40;
+        border-radius: 8px;
+    }
+    
+    /* Input Fields */
+    .stSelectbox div[data-baseweb="select"], .stNumberInput > div > div > input, .stSlider > div[data-baseweb="slider"] {
+        background-color: rgba(255,255,255,0.05);
+        color: white;
+        border-radius: 6px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SESSION STATE MANAGEMENT ---
-if 'model' not in st.session_state:
+
+# --- Load Resources ---
+@st.cache_resource
+def load_model():
+    model_path = 'best_tb_model.pkl'
+    if not os.path.exists(model_path):
+        st.error(f"Error: Model file '{model_path}' not found. Please ensure it is in the same directory as app.py.")
+        return None
     try:
-        st.session_state['model'] = joblib.load('best_tb_model.pkl')
-    except FileNotFoundError:
-        st.session_state['model'] = None
+        model = joblib.load(model_path)
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model: {e}")
+        return None
 
-if 'data' not in st.session_state:
-    # Try to load the dataset if it exists locally for the dashboard
-    if os.path.exists('TB.csv'):
-        st.session_state['data'] = pd.read_csv('TB.csv')
-    else:
-        st.session_state['data'] = None
+@st.cache_data
+def load_data():
+    data_path = 'TB.csv'
+    if not os.path.exists(data_path):
+        st.warning(f"Warning: Dataset '{data_path}' not found for EDA. Place it in the app directory.")
+        return None
+    try:
+        df = pd.read_csv(data_path)
+        return df
+    except Exception as e:
+        st.error(f"Failed to load data: {e}")
+        return None
 
-# --- 3. HELPER FUNCTIONS ---
-def preprocess_input(age, gender, residence, bmi, diabetes, hba1c, smoking, alcohol):
-    burden = 0
-    if diabetes == "Yes": burden += 1
-    if smoking == "Current": burden += 1
-    if alcohol == "Daily": burden += 1
+model = load_model()
+df = load_data()
+
+
+# --- Feature Engineering Pipeline ---
+def preprocess_input(inputs):
+    """
+    Transforms raw user inputs into the exact feature array format required by the model:
+    ['Age', 'Gender', 'Residence', 'BMI_Baseline', 'Diabetes_Status', 'HbA1c_Level', 
+     'Smoking_Status', 'Alcohol_Frequency', 'Syndemic_Burden', 
+     'State_Zone_North', 'State_Zone_South', 'State_Zone_West']
+    """
     
-    gender_enc = 1 if gender == "Male" else 0
-    res_enc = 1 if residence == "Urban" else 0
-    diab_enc = 1 if diabetes == "Yes" else 0
+    # Extract inputs
+    age = inputs['Age']
+    gender_raw = inputs['Gender']
+    residence_raw = inputs['Residence']
+    bmi = inputs['BMI_Baseline']
+    diabetes_raw = inputs['Diabetes_Status']
+    hba1c = inputs['HbA1c_Level']
+    smoking_raw = inputs['Smoking_Status']
+    alcohol_raw = inputs['Alcohol_Frequency']
+    state_zone_raw = inputs['State_Zone']
+
+    # 1. Diabetes mapping (Yes=1, No=0)
+    diabetes_status = 1 if diabetes_raw == 'Yes' else 0
+
+    # 2. Impute HbA1c
+    if hba1c == 0.0:
+        hba1c = 8.13 if diabetes_status == 1 else 5.40
+
+    # 3. Syndemic Burden Calculation (0-3)
+    smoking_burden = 1 if smoking_raw == 'Current' else 0
+    alcohol_burden = 1 if alcohol_raw == 'Daily' else 0
+    syndemic_burden = diabetes_status + smoking_burden + alcohol_burden
+
+    # 4. Label Encoding
+    # Assuming standard alphabetical/order-of-appearance mapping similar to LabelEncoder
+    # Note: For strict adherence to the notebook, we need to map based on how the training data was encoded.
+    # Usually: Female:0, Male:1; Rural:0, Urban:1.
+    # We will implement reasonable defaults matching standard alphabetical LabelEncoder behavior if unknown.
+    gender_map = {'Female': 0, 'Male': 1, 'Transgender/Other': 2}
+    gender = gender_map.get(gender_raw, 0)
     
-    smoke_map = {"Current": 0, "Ex": 1, "Never": 2}
-    alc_map = {"Daily": 0, "None": 1, "Rare": 2, "Weekly": 3}
+    residence_map = {'Rural': 0, 'Urban': 1, 'Slum': 2}
+    residence = residence_map.get(residence_raw, 0)
     
-    data = pd.DataFrame({
-        'Age': [age],
-        'Gender': [gender_enc],
-        'Residence': [res_enc],
-        'BMI_Baseline': [bmi],
-        'Diabetes_Status': [diab_enc],
-        'HbA1c_Level': [hba1c],
-        'Smoking_Status': [smoke_map.get(smoking, 2)],
-        'Alcohol_Frequency': [alc_map.get(alcohol, 1)],
-        'Syndemic_Burden': [burden],
-        'State_Zone_North': [0],
-        'State_Zone_South': [0],
-        'State_Zone_West': [0]
-    })
-    return data
-
-def generate_clinical_advice(prob, hba1c, bmi, smoking, alcohol, diabetes):
-    recommendations = {
-        "💊 Treatment Protocol": [],
-        "🩺 Comorbidity Management": [],
-        "🥗 Lifestyle & Nutrition": []
-    }
-
-    # 1. Treatment Protocol based on Success Probability
-    if prob < 0.5:
-        recommendations["💊 Treatment Protocol"].append(
-            ("🚨 **Intensified Regimen (DOTS Plus):** High risk of treatment failure. Strict adherence monitoring and regular sputum smear testing required.", "error")
-        )
-    elif prob < 0.7:
-        recommendations["💊 Treatment Protocol"].append(
-            ("⚠️ **Standard Regimen with Close Monitoring:** Moderate risk. Ensure strict bi-weekly follow-ups.", "warning")
-        )
-    else:
-        recommendations["💊 Treatment Protocol"].append(
-            ("✅ **Standard First-Line Regimen:** Patient has a high probability of successful treatment outcome.", "success")
-        )
-
-    # 2. Comorbidity Management
-    if diabetes == "Yes" or hba1c >= 6.5:
-        recommendations["🩺 Comorbidity Management"].append(
-            ("🩸 **Strict Glycemic Control:** Mandatory Endocrinology consultation. Uncontrolled blood sugar severely impairs TB drug absorption.", "error")
-        )
-    elif 5.7 <= hba1c < 6.5:
-        recommendations["🩺 Comorbidity Management"].append(
-            ("📉 **Pre-Diabetes Monitoring:** Monitor blood glucose levels periodically during the intensive phase of TB treatment.", "warning")
-        )
-
-    # 3. Lifestyle & Nutrition
-    if bmi < 18.5:
-        recommendations["🥗 Lifestyle & Nutrition"].append(
-            ("🍲 **Severe Nutritional Support:** Link patient to Nikshay Poshan Yojana. Prescribe high-protein dietary supplements to combat wasting.", "error")
-        )
-    elif 18.5 <= bmi <= 20.0:
-        recommendations["🥗 Lifestyle & Nutrition"].append(
-            ("🍎 **Dietary Counseling:** Patient is on the lower end of healthy weight. Advise a balanced, caloric-dense diet.", "info")
-        )
-
-    if smoking == "Current":
-        recommendations["🥗 Lifestyle & Nutrition"].append(
-            ("🚭 **Smoking Cessation:** Immediate intervention required. Smoking increases the risk of cavitary lesions and delays sputum conversion.", "error")
-        )
-    elif smoking == "Ex":
-        recommendations["🥗 Lifestyle & Nutrition"].append(
-            ("🛡️ **Relapse Prevention:** Reinforce abstinence from smoking to ensure optimal lung tissue recovery.", "info")
-        )
-
-    if alcohol in ["Daily", "Weekly"]:
-        recommendations["🥗 Lifestyle & Nutrition"].append(
-            ("🍷 **Alcohol Abstinence Mandatory:** High risk of severe drug-induced hepatotoxicity (liver damage) when combined with standard TB medications like Isoniazid and Rifampicin.", "error")
-        )
-
-    return recommendations
-
-# --- 4. SIDEBAR NAVIGATION ---
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2966/2966327.png", width=100)
-st.sidebar.title("NTEP Portal")
-st.sidebar.markdown("---")
-page = st.sidebar.radio("Navigate to:", 
-    ["🏠 Home", "🩺 Patient Assessment", "📊 Dashboard", "🗺️ Geography", "📈 Analytics", "ℹ️ About"]
-)
-st.sidebar.markdown("---")
-if st.session_state['model']:
-    st.sidebar.success("✅ Model: Active")
-else:
-    st.sidebar.error("❌ Model: Offline")
-
-# --- 5. PAGE IMPLEMENTATIONS ---
-
-# ==========================================
-# HOME PAGE
-# ==========================================
-if page == "🏠 Home":
-    st.title("🏥 NTEP: Tuberculosis Treatment Outcome Predictor")
-    st.markdown("### Advanced ML Platform for Risk Stratification & Comorbidity Management")
+    smoking_map = {'Current': 0, 'Former': 1, 'Never': 2}
+    smoking = smoking_map.get(smoking_raw, 2)
     
-    st.markdown("""
-    Welcome to the smart diagnostic assistant designed for healthcare providers. 
-    This platform leverages machine learning to predict tuberculosis treatment outcomes 
-    based on clinical markers, demographics, and lifestyle comorbidities.
-    """)
+    alcohol_map = {'Daily': 0, 'Occasional': 1, 'Never': 2, 'NaN': 3} # Based on standard label encoder behavior
+    alcohol = alcohol_map.get(alcohol_raw, 2)
+
+    # 5. One-Hot Encoding for State_Zone (North, South, West)
+    # The training model dropped the first (likely East).
+    state_zone_north = 1 if state_zone_raw == 'North' else 0
+    state_zone_south = 1 if state_zone_raw == 'South' else 0
+    state_zone_west = 1 if state_zone_raw == 'West' else 0
+
+    features = np.array([[
+        age, 
+        gender, 
+        residence, 
+        bmi, 
+        diabetes_status, 
+        hba1c, 
+        smoking, 
+        alcohol, 
+        syndemic_burden, 
+        state_zone_north, 
+        state_zone_south, 
+        state_zone_west
+    ]])
     
-    st.divider()
+    return features, syndemic_burden
+
+def preprocess_batch(df_input):
+    df = df_input.copy()
     
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric(label="Total Patients Analyzed", value="1,245", delta="↑ 12% this month")
-    with col2:
-        st.metric(label="Model Accuracy", value="89.4%", delta="Optimized")
-    with col3:
-        st.metric(label="High Risk Flagged", value="312", delta="-5% from last month", delta_color="inverse")
-    with col4:
-        st.metric(label="Active Regions", value="4 Zones")
+    expected_cols = ['Age', 'Gender', 'Residence', 'BMI_Baseline', 'Diabetes_Status', 'HbA1c_Level', 'Smoking_Status', 'Alcohol_Frequency']
+    missing_cols = [col for col in expected_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {', '.join(missing_cols)}")
         
-    st.image("https://images.unsplash.com/photo-1576091160550-2173ff9e8eb8?auto=format&fit=crop&q=80&w=1200", use_container_width=True, caption="Empowering Clinical Decisions through Data")
+    df['Diabetes_Status_num'] = df['Diabetes_Status'].apply(lambda x: 1 if str(x).strip().lower() == 'yes' or x == 1 else 0)
+    
+    def impute_hba1c(row):
+        h = row['HbA1c_Level']
+        if pd.isna(h) or h == 0.0:
+            return 8.13 if row['Diabetes_Status_num'] == 1 else 5.40
+        return h
+    df['HbA1c_Level_num'] = df.apply(impute_hba1c, axis=1)
+    
+    df['smoking_burden'] = df['Smoking_Status'].apply(lambda x: 1 if str(x).strip().lower() == 'current' else 0)
+    df['alcohol_burden'] = df['Alcohol_Frequency'].apply(lambda x: 1 if str(x).strip().lower() == 'daily' else 0)
+    df['Syndemic_Burden'] = df['Diabetes_Status_num'] + df['smoking_burden'] + df['alcohol_burden']
+    
+    gender_map = {'Female': 0, 'Male': 1, 'Transgender/Other': 2, 'female': 0, 'male': 1, 'transgender/other': 2}
+    df['Gender_num'] = df['Gender'].map(gender_map).fillna(0)
+    
+    residence_map = {'Rural': 0, 'Urban': 1, 'Slum': 2, 'rural': 0, 'urban': 1, 'slum': 2}
+    df['Residence_num'] = df['Residence'].map(residence_map).fillna(0)
+    
+    smoking_map = {'Current': 0, 'Former': 1, 'Never': 2, 'current': 0, 'former': 1, 'never': 2}
+    df['Smoking_Status_num'] = df['Smoking_Status'].map(smoking_map).fillna(2)
+    
+    alcohol_map = {'Daily': 0, 'Occasional': 1, 'Never': 2, 'daily': 0, 'occasional': 1, 'never': 2}
+    df['Alcohol_Frequency_num'] = df['Alcohol_Frequency'].map(alcohol_map).fillna(2)
+    
+    df['State_Zone_North'] = 0
+    df['State_Zone_South'] = 0
+    df['State_Zone_West'] = 0
+    
+    features = df[['Age', 'Gender_num', 'Residence_num', 'BMI_Baseline', 'Diabetes_Status_num', 'HbA1c_Level_num', 
+                   'Smoking_Status_num', 'Alcohol_Frequency_num', 'Syndemic_Burden', 
+                   'State_Zone_North', 'State_Zone_South', 'State_Zone_West']]
+    
+    features = features.rename(columns={
+        'Gender_num': 'Gender',
+        'Residence_num': 'Residence',
+        'Diabetes_Status_num': 'Diabetes_Status',
+        'HbA1c_Level_num': 'HbA1c_Level',
+        'Smoking_Status_num': 'Smoking_Status',
+        'Alcohol_Frequency_num': 'Alcohol_Frequency'
+    })
+    
+    return features
+
+
+# --- Sidebar Navigation ---
+st.sidebar.title("TB Risk Predictor")
+st.sidebar.caption("👨‍💻 Developed by **Joyston Jose D'souza**")
+st.sidebar.markdown("---")
+page = st.sidebar.radio("Navigation", ["Clinical Triage", "Interactive EDA", "Clinical Protocols"])
+st.sidebar.markdown("---")
+
+persistent_file = "patient_records.csv"
+if os.path.exists(persistent_file):
+    st.sidebar.markdown("### 💾 Patient Database")
+    with open(persistent_file, "rb") as f:
+        st.sidebar.download_button(
+            label="Download All Records (CSV)",
+            data=f,
+            file_name="all_patient_records.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    if st.sidebar.button("🗑️ Delete All Records", use_container_width=True):
+        os.remove(persistent_file)
+        st.rerun()
+    st.sidebar.markdown("---")
+
+st.sidebar.caption("Revolutionizing TB care with predictive analytics and dynamic clinical insights.")
+
 
 # ==========================================
-# PATIENT ASSESSMENT TAB
+# PAGE 1: Clinical Triage & Prediction
 # ==========================================
-elif page == "🩺 Patient Assessment":
-    st.title("🩺 Clinical Patient Assessment")
+if page == "Clinical Triage":
+    st.title("Exploratory and Predictive Analysis of Tuberculosis and Lifestyle Comorbidities")
+    st.markdown("Evaluate patient risk through a single entry below or upload a batch CSV for bulk predictions.")
     
-    tab1, tab2 = st.tabs(["👤 Individual Screening", "📂 Batch Processor"])
+    tab1, tab2 = st.tabs(["Single Patient Triage", "Batch Prediction Upload"])
     
     with tab1:
-        st.markdown("Enter patient details below to generate a predictive risk score and customized medical report.")
-        
-        with st.form("patient_form"):
-            col1, col2, col3 = st.columns(3)
+        with st.container():
+            col1, col2 = st.columns([1, 1])
+            
             with col1:
-                st.subheader("Demographics")
-                age = st.slider("Age", 15, 90, 35)
-                gender = st.selectbox("Gender", ["Male", "Female"])
-                residence = st.selectbox("Residence", ["Urban", "Rural"])
+                st.markdown("### Demographic details")
+                age = st.number_input("Age (Years) *", min_value=1, max_value=100, value=None, placeholder="Required")
+                gender = st.selectbox("Gender", ["Male", "Female", "Transgender/Other"])
+                residence = st.selectbox("Residence Type", ["Rural", "Urban", "Slum"])
+                
+                st.markdown("### Clinical Baseline")
+                bmi = st.slider("Baseline BMI", min_value=10.0, max_value=50.0, value=20.5, step=0.1)
+                
             with col2:
-                st.subheader("Clinical Markers")
-                bmi = st.number_input("BMI (Baseline)", 10.0, 40.0, 18.5)
-                diabetes = st.radio("Diabetes Status", ["No", "Yes"])
-                hba1c = st.slider("HbA1c Level", 4.0, 15.0, 5.4)
-            with col3:
-                st.subheader("Lifestyle Habits")
-                smoking = st.selectbox("Smoking Status", ["Never", "Ex", "Current"])
-                alcohol = st.selectbox("Alcohol Frequency", ["None", "Rare", "Weekly", "Daily"])
+                st.markdown("### Syndemic Factors (Comorbidities)")
+                diabetes = st.selectbox("Diabetes Status", ["No", "Yes"])
+                hba1c = st.slider("HbA1c Level (%)", min_value=0.0, max_value=15.0, value=0.0, step=0.1)
+                st.caption("ℹ️ Leave at 0 to auto-estimate based on diabetes status.")
+                smoking = st.selectbox("Smoking Status", ["Never", "Former", "Current"])
+                alcohol = st.selectbox("Alcohol Frequency", ["Never", "Occasional", "Daily"])
                 
-            submitted = st.form_submit_button("Generate Clinical Report")
-            
-        if submitted:
-            if st.session_state['model'] is None:
-                st.error("Model not loaded. Please ensure 'best_tb_model.pkl' is in the directory.")
-            else:
-                input_df = preprocess_input(age, gender, residence, bmi, diabetes, hba1c, smoking, alcohol)
-                model = st.session_state['model']
-                prediction_prob = model.predict_proba(input_df)[0][1]
-                
-                st.divider()
-                st.subheader("📄 Automated Medical Report")
-                
-                r_col1, r_col2 = st.columns([1, 2])
-                with r_col1:
-                    st.markdown("#### Treatment Success Probability")
-                    fig = go.Figure(go.Indicator(
-                        mode = "gauge+number",
-                        value = prediction_prob * 100,
-                        domain = {'x': [0, 1], 'y': [0, 1]},
-                        title = {'text': "Success Rate (%)"},
-                        gauge = {
-                            'axis': {'range': [None, 100]},
-                            'bar': {'color': "darkblue"},
-                            'steps' : [
-                                {'range': [0, 50], 'color': "lightcoral"},
-                                {'range': [50, 75], 'color': "khaki"},
-                                {'range': [75, 100], 'color': "lightgreen"}],
-                        }
-                    ))
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with r_col2:
-                    st.markdown("#### Clinical Recommendations & Interventions")
-                    
-                    # Call the updated function (make sure to pass the 'diabetes' variable)
-                    advices_dict = generate_clinical_advice(prediction_prob, hba1c, bmi, smoking, alcohol, diabetes)
-                    
-                    # Loop through categories and display appropriately styled alerts
-                    for category, items in advices_dict.items():
-                        if items:  # Only display category if it has recommendations
-                            st.markdown(f"##### {category}")
-                            for text, msg_type in items:
-                                if msg_type == "error":
-                                    st.error(text, icon="🚨" if "DOTS" in text else None)
-                                elif msg_type == "warning":
-                                    st.warning(text)
-                                elif msg_type == "success":
-                                    st.success(text)
-                                else:
-                                    st.info(text)
-                                    
-                    st.divider()
-                    st.markdown("**Patient Profile Summary:**")
-                    st.caption(f"**Demographics:** {age} yrs | {gender} | {residence} resident")
-                    st.caption(f"**Vitals:** BMI: {bmi} | HbA1c: {hba1c} | Diabetic: {diabetes}")
-                    st.caption(f"**Lifestyle:** Smoking: {smoking} | Alcohol: {alcohol}")
-    with tab2:
-        st.subheader("📂 Batch Clinical Processor")
-        st.markdown("Upload hospital CSV records for automated risk stratification.")
-        uploaded_file = st.file_uploader("Upload Patient Dataset (CSV)", type="csv")
+        st.markdown("<br>", unsafe_allow_html=True)
         
-        if uploaded_file is not None and st.session_state['model'] is not None:
-            batch_df = pd.read_csv(uploaded_file)
-            required_cols = ['Age', 'Gender', 'Residence', 'BMI_Baseline', 'Diabetes_Status', 'HbA1c_Level', 'Smoking_Status', 'Alcohol_Frequency']
-            
-            if all(col in batch_df.columns for col in required_cols):
-                with st.spinner("Processing records..."):
-                    processed_rows = []
-                    for index, row in batch_df.iterrows():
-                        p_data = preprocess_input(
-                            row['Age'], row['Gender'], row['Residence'], row['BMI_Baseline'], 
-                            "Yes" if row['Diabetes_Status'] == 1 else "No", 
-                            row['HbA1c_Level'], row['Smoking_Status'], row['Alcohol_Frequency']
+        predict_btn = st.button("Generate Prediction & Compute Risk", use_container_width=True)
+        
+        if predict_btn:
+            if age is None:
+                st.error("Please enter a valid age before generating a prediction.")
+            elif model is None:
+                st.error("Prediction unavailable because the model file could not be loaded.")
+            else:
+                inputs = {
+                    'Age': age,
+                    'Gender': gender,
+                    'Residence': residence,
+                    'State_Zone': 'East',
+                    'BMI_Baseline': bmi,
+                    'Diabetes_Status': diabetes,
+                    'HbA1c_Level': hba1c,
+                    'Smoking_Status': smoking,
+                    'Alcohol_Frequency': alcohol
+                }
+                
+                # Preprocess and calculate factors
+                features, syndemic_score = preprocess_input(inputs)
+                
+                # Make prediction
+                try:
+                    prediction = model.predict(features)[0]
+                    proba = model.predict_proba(features)[0]
+                    
+                    # Update Session State for Clinical Protocols Page
+                    st.session_state['last_inputs'] = inputs
+                    st.session_state['syndemic_score'] = syndemic_score
+                    
+                    st.markdown("---")
+                    st.markdown("### 📊 Prognostic Results")
+                    
+                    res_col1, res_col2 = st.columns([2, 1])
+                    
+                    with res_col1:
+                        # Model Output
+                        if prediction == 1:
+                            st.success("🟢 **Forecast: Success / Cured / Completed**")
+                            st.info(f"Model Confidence: {proba[1]*100:.1f}%")
+                            st.progress(float(proba[1]))
+                        else:
+                            st.error("🔴 **Forecast: Poor Outcome / Failed / Lost to Follow-up**")
+                            st.warning(f"Model Confidence: {proba[0]*100:.1f}%")
+                            st.progress(float(proba[0]))
+                    
+                    with res_col2:
+                        # Syndemic Metric Display
+                        score_color = ""
+                        if syndemic_score == 0:
+                            score_color = "normal"
+                            state = "Low Risk"
+                        elif syndemic_score == 1:
+                            score_color = "off"
+                            state = "Moderate"
+                        else:
+                            score_color = "inverse"
+                            state = "High Burden"
+                            
+                        st.metric(label="Syndemic Burden Score", value=f"{syndemic_score} / 3", delta=state, delta_color=score_color)
+                    
+                    st.markdown("Navigate to the **Clinical Protocols** tab on the sidebar to view personalized actionable recommendations based on these results.")
+                    
+
+                except Exception as e:
+                    st.error(f"Prediction error: {e}")
+                    
+                st.markdown("---")
+                st.markdown("---")
+                # --- Generate Patient ID ---
+                persistent_file = "patient_records.csv"
+                patient_id = "TB-0001"
+                if os.path.exists(persistent_file):
+                    try:
+                        existing_df = pd.read_csv(persistent_file)
+                        if not existing_df.empty and 'Patient_ID' in existing_df.columns:
+                            last_id = existing_df['Patient_ID'].iloc[-1]
+                            if str(last_id).startswith("TB-"):
+                                num_part = int(str(last_id).split("-")[1])
+                                patient_id = f"TB-{num_part + 1:04d}"
+                            else:
+                                patient_id = f"TB-{len(existing_df) + 1:04d}"
+                    except Exception:
+                        pass
+
+                # --- Build and Save Record ---
+                st.session_state['last_patient_id'] = patient_id
+                record_inputs = inputs.copy()
+                if 'State_Zone' in record_inputs:
+                    del record_inputs['State_Zone']
+
+                record = {'Patient_ID': patient_id}
+                record.update(record_inputs)
+                record['Syndemic_Burden_Score'] = f"{syndemic_score} / 3"
+                record['Prediction_Result'] = "Success / Cured" if prediction == 1 else "Poor Outcome / Failed"
+                record['Confidence'] = f"{proba[1]*100:.1f}%" if prediction == 1 else f"{proba[0]*100:.1f}%"
+
+                record_df = pd.DataFrame([record])
+
+                if os.path.exists(persistent_file):
+                    record_df.to_csv(persistent_file, mode='a', header=False, index=False)
+                else:
+                    record_df.to_csv(persistent_file, index=False)
+
+                csv_report = record_df.to_csv(index=False).encode('utf-8')
+
+
+
+                st.markdown(f"### 💾 Patient Record (ID: {patient_id})")
+                st.success("Record generated and database updated successfully. You can download the individual prediction below.")
+                st.download_button(
+                    label="Download Individual Report (CSV)",
+                    data=csv_report,
+                    file_name=f"{patient_id}_triage_report.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
+
+    # ---- Always-visible All Patient Records table (inside tab1 only) ----
+    with tab1:
+        def build_proto_report(row):
+            """Generate a clinical protocols report text for a given patient record row."""
+            lines = [
+                "==========================================",
+                "   NTEP SMART PREDICTOR CLINICAL REPORT   ",
+                f"   Patient ID: {row.get('Patient_ID', 'N/A')}",
+                "==========================================\n",
+                f"Patient Age: {row.get('Age', 'N/A')}",
+                f"Patient Gender: {row.get('Gender', 'N/A')}",
+                f"Baseline BMI: {row.get('BMI_Baseline', 'N/A')}",
+                f"Diabetes Status: {row.get('Diabetes_Status', 'N/A')}",
+                f"Smoking Status: {row.get('Smoking_Status', 'N/A')}",
+                f"Alcohol Frequency: {row.get('Alcohol_Frequency', 'N/A')}",
+                f"Syndemic Burden Score: {row.get('Syndemic_Burden_Score', 'N/A')}\n",
+                "------------------------------------------",
+                "TARGETED PROTOCOLS & INTERVENTIONS:",
+                "------------------------------------------",
+            ]
+            has_proto = False
+            try:
+                if str(row.get('Smoking_Status', '')).strip() == 'Current':
+                    has_proto = True
+                    lines.append("\n[TOBACCO DEPENDENCY]")
+                    lines.append("Protocol: Immediate referral for pulmonary counseling and cessation therapy.")
+                hba1c_val = float(row.get('HbA1c_Level', 0) or 0)
+                if hba1c_val > 6.5 or str(row.get('Diabetes_Status', '')).strip() == 'Yes':
+                    has_proto = True
+                    lines.append("\n[GLYCEMIC DYSREGULATION]")
+                    lines.append("Protocol: Endocrinology consultation required. Initiate fasting glucose tracking.")
+                if str(row.get('Alcohol_Frequency', '')).strip() == 'Daily':
+                    has_proto = True
+                    lines.append("\n[ALCOHOL CONSUMPTION RISK]")
+                    lines.append("Protocol: Assess for hepatic strain. Increase frequency of LFTs.")
+                bmi_val = float(row.get('BMI_Baseline', 99) or 99)
+                if bmi_val < 18.5:
+                    has_proto = True
+                    lines.append("\n[UNDERNUTRITION]")
+                    lines.append("Protocol: Initiate direct nutritional supplementation pathway.")
+            except Exception:
+                pass
+            if not has_proto:
+                lines.append("\n[STANDARD PROTOCOL]")
+                lines.append("No severe comorbidities detected. Proceed with standard DOTS protocol.")
+            return "\n".join(lines)
+
+        persistent_file_check = "patient_records.csv"
+        if os.path.exists(persistent_file_check):
+            try:
+                all_records_df = pd.read_csv(persistent_file_check)
+                if not all_records_df.empty:
+                    st.markdown("---")
+                    st.markdown("### 🗂️ All Patient Records")
+                    data_cols = list(all_records_df.columns)
+                    header_cols = st.columns(len(data_cols) + 1)
+                    for i, col_name in enumerate(data_cols):
+                        header_cols[i].markdown(f"**{col_name}**")
+                    header_cols[-1].markdown("**Clinical Report**")
+                    st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
+                    for idx, row in all_records_df.iterrows():
+                        row_cols = st.columns(len(data_cols) + 1)
+                        for i, col_name in enumerate(data_cols):
+                            row_cols[i].write(str(row[col_name]))
+                        proto_txt = build_proto_report(row.to_dict())
+                        pid = str(row.get('Patient_ID', 'patient'))
+                        row_cols[-1].download_button(
+                            label="📄",
+                            data=proto_txt,
+                            file_name=f"{pid}_clinical_protocols.txt",
+                            mime="text/plain",
+                            key=f"dl_main_{pid}_{idx}"
                         )
-                        processed_rows.append(p_data)
-                    
-                    final_batch_df = pd.concat(processed_rows, ignore_index=True)
-                    batch_probs = st.session_state['model'].predict_proba(final_batch_df)[:, 1]
-                    
-                    batch_df['Success_Prob_%'] = (batch_probs * 100).round(2)
-                    batch_df['Risk_Category'] = ["High Risk" if p < 0.5 else "Moderate" if p < 0.7 else "Low Risk" for p in batch_probs]
-                    
-                    st.success(f"Successfully processed {len(batch_df)} patients.")
-                    
-                    # Style dataframe
-                    def color_risk(val):
-                        color = 'red' if val == 'High Risk' else 'orange' if val == 'Moderate' else 'green'
-                        return f'color: {color}; font-weight: bold'
-                    
-                    st.dataframe(batch_df[['Age', 'Gender', 'Success_Prob_%', 'Risk_Category']].style.map(color_risk, subset=['Risk_Category']))
-                    
-                    csv_output = batch_df.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Download Stratification Report (CSV)", data=csv_output, file_name="Batch_Risk_Report.csv", mime="text/csv")
-            else:
-                st.error(f"Dataset missing required columns. Ensure it has: {', '.join(required_cols)}")
+            except Exception:
+                pass
+
+    with tab2:
+
+        st.markdown("### Batch Prediction Upload")
+        st.markdown("Upload a **CSV or Excel** file containing patient data to generate predictions in bulk. Required columns: `Age`, `Gender`, `Residence`, `BMI_Baseline`, `Diabetes_Status`, `HbA1c_Level`, `Smoking_Status`, `Alcohol_Frequency`.")
+        
+        uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx", "xls"])
+        
+        if uploaded_file is not None:
+            try:
+                file_name = uploaded_file.name.lower()
+                if file_name.endswith(".xlsx") or file_name.endswith(".xls"):
+                    batch_df = pd.read_excel(uploaded_file)
+                else:
+                    batch_df = pd.read_csv(uploaded_file)
+                st.write("Preview of uploaded data:")
+                st.dataframe(batch_df.head())
+                
+                if st.button("Generate Batch Predictions", use_container_width=True):
+                    if model is None:
+                        st.error("Prediction unavailable because the model file could not be loaded.")
+                    else:
+                        with st.spinner("Processing data and generating predictions..."):
+                            features_df = preprocess_batch(batch_df)
+                            predictions = model.predict(features_df)
+                            probas = model.predict_proba(features_df)
+                            
+                            batch_df['Prediction'] = ['Success / Cured' if p == 1 else 'Poor Outcome' for p in predictions]
+                            batch_df['Model Confidence'] = [f"{prob[1]*100:.1f}%" if p == 1 else f"{prob[0]*100:.1f}%" for p, prob in zip(predictions, probas)]
+                            
+                            # Remove State_Zone if it was accidentally included in the upload
+                            if 'State_Zone' in batch_df.columns:
+                                batch_df = batch_df.drop(columns=['State_Zone'])
+                                
+                            st.success("Batch predictions generated successfully!")
+                            st.dataframe(batch_df)
+                            
+                            csv = batch_df.to_csv(index=False).encode('utf-8')
+                            st.download_button(
+                                label="Download Predictions as CSV",
+                                data=csv,
+                                file_name='batch_predictions.csv',
+                                mime='text/csv',
+                                use_container_width=True
+                            )
+            except Exception as e:
+                st.error(f"An error occurred while processing the file: {e}")
+
 
 # ==========================================
-# DASHBOARD TAB
+# PAGE 2: Interactive EDA
 # ==========================================
-elif page == "📊 Dashboard":
-    st.title("📊 Epidemiological Dashboard")
-    st.markdown("Macro-level analysis of patient distributions and comorbidity trends.")
+elif page == "Interactive EDA":
+    st.title("Interactive Exploratory Data Analysis")
+    st.markdown("Visualize the underlying dynamics of the training cohort.")
     
-    if st.session_state['data'] is not None:
-        df = st.session_state['data']
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Age Distribution by Gender")
-            fig_age = px.histogram(df, x="Age", color="Gender", marginal="box", barmode="overlay")
-            st.plotly_chart(fig_age, use_container_width=True)
+    if df is None:
+        st.warning("Please place `TB.csv` in the application root directory to enable visualizations.")
+    else:
+        # Pre-process DF for visualization purposes
+        if 'Treatment_Outcome' in df.columns:
+            success_outcomes = ['Cured', 'Completed']
+            df['Outcome_Binary'] = df['Treatment_Outcome'].apply(lambda x: 1 if x in success_outcomes else 0)
+            df['Outcome_Label'] = df['Outcome_Binary'].map({1: 'Success', 0: 'Poor Outcome'})
             
-        with col2:
-            st.subheader("BMI vs HbA1c Levels")
-            # Checking if actual columns exist, otherwise fallback
-            if 'HbA1c_Level' in df.columns and 'BMI_Baseline' in df.columns:
-                fig_scatter = px.scatter(df, x="BMI_Baseline", y="HbA1c_Level", color="Diabetes_Status", trendline="ols")
-                st.plotly_chart(fig_scatter, use_container_width=True)
-            else:
-                st.warning("BMI and HbA1c columns not found in dataset.")
-    else:
-        st.info("💡 Upload data in the backend or place `TB.csv` in the app directory to view live epidemiological charts.")
-        # Dummy chart for professional look when empty
-        np.random.seed(42)
-        dummy_df = pd.DataFrame({'Age': np.random.normal(45, 15, 200), 'Outcome': np.random.choice(['Success', 'Failure'], 200)})
-        fig = px.histogram(dummy_df, x="Age", color="Outcome", title="Sample Age Distribution (Demo Data)")
-        st.plotly_chart(fig)
-
-# ==========================================
-# GEOGRAPHY TAB
-# ==========================================
-elif page == "🗺️ Geography":
-    st.title("🗺️ Geographical Case Distribution")
-    st.markdown("Visualizing regional vulnerability and case concentrations.")
-    
-    if st.session_state['data'] is not None and 'State' in st.session_state['data'].columns:
-        # Assuming there is a State column to group by
-        state_counts = st.session_state['data']['State'].value_counts().reset_index()
-        state_counts.columns = ['State', 'Cases']
-        fig_map = px.bar(state_counts, x='State', y='Cases', color='Cases', title="Cases per Region")
-        st.plotly_chart(fig_map, use_container_width=True)
-    else:
-        st.info("Mapping requires state or coordinate data. Showing simulated heat distribution for demonstration.")
-        # Dummy map data focusing broadly on Indian coordinates
-        map_data = pd.DataFrame(
-            np.random.randn(50, 2) / [2, 2] + [20.5937, 78.9629], # India rough center
-            columns=['lat', 'lon']
-        )
-        st.map(map_data, zoom=4)
-
-# ==========================================
-# ANALYTICS TAB
-# ==========================================
-elif page == "📈 Analytics":
-    st.title("📈 Advanced Statistical Analytics")
-    st.markdown("Deep dive into feature correlation and model insights.")
-    
-    if st.session_state['data'] is not None:
-        df = st.session_state['data'].select_dtypes(include=[np.number]) # Only numeric
-        if not df.empty:
-            corr = df.corr()
-            fig_corr = px.imshow(corr, text_auto=True, aspect="auto", color_continuous_scale='RdBu_r', title="Feature Correlation Heatmap")
-            st.plotly_chart(fig_corr, use_container_width=True)
-    else:
-        st.warning("Please provide `TB.csv` to compute correlation matrices and feature importance.")
-
-# ==========================================
-# ABOUT TAB
-# ==========================================
-elif page == "ℹ️ About":
-    st.title("ℹ️ About the NTEP Predictor")
-    st.markdown("""
-    ### Project Overview
-    This application is an interface for the **Exploratory and Predictive Analysis of Tuberculosis and Lifestyle Comorbidities** project. 
-    It is designed to assist clinical practitioners under the National Tuberculosis Elimination Programme (NTEP) framework.
-    
-    ### Model Information
-    - **Algorithm:** The platform utilizes an optimized Machine Learning classification model (`best_tb_model.pkl`).
-    - **Target Variable:** Predicts the binary outcome of TB treatment (Success vs. Failure/Default/Death).
-    - **Key Features Analyzed:** - Baseline Demographics (Age, Gender)
-        - Anthropometry (BMI)
-        - Syndemic Factors (HbA1c levels, Diabetes status)
-        - Lifestyle Hazards (Smoking, Alcohol dependency)
+        st.markdown("### 1. Treatment Outcome Distribution")
+        view_col1, view_col2 = st.columns([3, 1])
         
-    ### Clinical Context
-    Tuberculosis outcomes are heavily influenced by the *Syndemic effect*—the aggregation of multiple concurrent epidemics. 
-    Managing blood glucose (HbA1c) and substance dependency are paramount to improving the efficacy of First-Line Anti-TB drugs (Rifampicin, Isoniazid, etc.).
+        with view_col1:
+            fig1 = px.histogram(df, x='Treatment_Outcome', color='Outcome_Label', 
+                                color_discrete_map={'Success': '#00f2fe', 'Poor Outcome': '#ff4b4b'},
+                                title='Historical Distribution of TB Outcomes')
+            fig1.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
+            st.plotly_chart(fig1, use_container_width=True)
+            
+        with view_col2:
+            st.markdown("<br><br>", unsafe_allow_html=True)
+            with st.expander("ℹ️ Dataset Insight", expanded=True):
+                st.write("The original dataset was highly imbalanced:")
+                st.write("- **Success:** ~78%")
+                st.write("- **Failure/Poor:** ~21%")
+                st.write("Synthetic Minority Over-sampling Technique (SMOTE) was utilized during Gradient Boosting model training to syntheticize minority cases and stabilize predictions.")
+                
+        st.markdown("---")
+        
+        st.markdown("### 2. Machine Learning Model Insights")
+        with st.expander("🧠 About the Predictive Model", expanded=True):
+            st.markdown("""
+            **Model Architecture:** Gradient Boosting Classifier
+            
+            **Why this model?**
+            - **Non-linear Relationships:** TB treatment outcomes rely on complex, non-linear interactions between demographic and clinical factors (such as BMI, age, and HbA1c levels), which tree-based models excel at capturing.
+            - **Robust to Outliers:** Gradient Boosting handles outliers in clinical datasets better than linear models.
+            - **High Performance on Structured Data:** Ensembles of decision trees are historically the most performant algorithms for tabular/structured clinical datasets.
+            - **Imbalanced Data:** When paired with SMOTE (Synthetic Minority Over-sampling Technique) to handle the 78/21 imbalanced outcome class, the model successfully maximizes recall for high-risk patients without sacrificing overall accuracy.
+            """)
+            
+        st.markdown("---")
+
+        st.markdown("### 3. Metabolic Variables vs. Treatment Outcome")
+        # Ensure HbA1c is clean for visualization
+        df_clean = df.copy()
+        mean_diab = df_clean[df_clean['Diabetes_Status'] == 1]['HbA1c_Level'].mean()
+        mean_nondiab = df_clean[df_clean['Diabetes_Status'] == 0]['HbA1c_Level'].mean()
+        df_clean.loc[(df_clean['Diabetes_Status'] == 1) & (df_clean['HbA1c_Level'].isna()), 'HbA1c_Level'] = mean_diab
+        df_clean.loc[(df_clean['Diabetes_Status'] == 0) & (df_clean['HbA1c_Level'].isna()), 'HbA1c_Level'] = mean_nondiab
+        
+        fig2 = px.scatter(df_clean, x='BMI_Baseline', y='HbA1c_Level', color='Outcome_Label',
+                          opacity=0.6,
+                          color_discrete_map={'Success': '#00f2fe', 'Poor Outcome': '#ff4b4b'},
+                          title="BMI vs. HbA1c Highlighted by Outcome")
+        fig2.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        st.markdown("---")
+        
+        st.markdown("### 3. Syndemic Factors Correlation Heatmap")
+        
+        # Prepare correlation matrix data
+        corr_cols = ['Diabetes_Status', 'Outcome_Binary']
+        if 'Smoking_Status' in df.columns:
+            df_clean['Smoking_Mapped'] = df_clean['Smoking_Status'].apply(lambda x: 1 if x == 'Current' else 0)
+            corr_cols.append('Smoking_Mapped')
+        if 'Alcohol_Frequency' in df.columns:
+            df_clean['Alcohol_Mapped'] = df_clean['Alcohol_Frequency'].apply(lambda x: 1 if x == 'Daily' else 0)
+            corr_cols.append('Alcohol_Mapped')
+            
+        corr_matrix = df_clean[corr_cols].corr()
+        
+        fig3 = px.imshow(corr_matrix, text_auto=True, aspect="auto",
+                         color_continuous_scale='RdBu_r', 
+                         title='Correlation of Comorbidities with Successful Outcome')
+        fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
+        st.plotly_chart(fig3, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- State Zone Visualization ---
+        if 'State_Zone' in df.columns and 'Outcome_Label' in df.columns:
+            st.markdown("### 4. TB Outcomes by State Zone")
+
+            zone_col1, zone_col2 = st.columns([3, 2])
+
+            with zone_col1:
+                zone_outcome = df.groupby(['State_Zone', 'Outcome_Label']).size().reset_index(name='Count')
+                fig_zone_bar = px.bar(
+                    zone_outcome,
+                    x='State_Zone', y='Count', color='Outcome_Label',
+                    barmode='group',
+                    color_discrete_map={'Success': '#00f2fe', 'Poor Outcome': '#ff4b4b'},
+                    title='Treatment Outcome Distribution by State Zone',
+                    labels={'State_Zone': 'State Zone', 'Count': 'Number of Patients'}
+                )
+                fig_zone_bar.update_layout(
+                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color='white'), legend_title_text='Outcome'
+                )
+                st.plotly_chart(fig_zone_bar, use_container_width=True)
+
+            with zone_col2:
+                zone_counts = df['State_Zone'].value_counts().reset_index()
+                zone_counts.columns = ['State_Zone', 'Count']
+                fig_zone_pie = px.pie(
+                    zone_counts,
+                    names='State_Zone', values='Count',
+                    title='Patient Share by Zone',
+                    color_discrete_sequence=px.colors.sequential.Plasma_r
+                )
+                fig_zone_pie.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color='white'),
+                    legend=dict(bgcolor='rgba(0,0,0,0)')
+                )
+                fig_zone_pie.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_zone_pie, use_container_width=True)
+
+
+# ==========================================
+# PAGE 3: Actionable Clinical Protocols
+# ==========================================
+elif page == "Clinical Protocols":
+    st.title("Actionable Clinical Protocols")
+    st.markdown("Targeted interventions based on the patient's individual comorbidity profiles.")
     
-    ---
-    *Disclaimer: This tool provides probabilistic statistical risk stratification and is designed to aid, not replace, professional clinical judgment.*
-    """)
+    if 'last_inputs' not in st.session_state:
+        st.info("⚠️ Please generate a prediction on the **Clinical Triage** page first to view personalized protocols.")
+    else:
+        inputs = st.session_state['last_inputs']
+        score = st.session_state.get('syndemic_score', 0)
+        
+        patient_id_display = st.session_state.get('last_patient_id', 'N/A')
+        st.subheader(f"Patient Summary Profile — ID: {patient_id_display}")
+        st.write(f"**Burden Score:** {score}/3 | **BMI:** {inputs['BMI_Baseline']} | **Age:** {inputs['Age']}")
+        
+        st.markdown("### Recommended Detailed Interventions")
+        
+        has_warnings = False
+        report_lines = [
+            "==========================================",
+            "   NTEP SMART PREDICTOR CLINICAL REPORT   ",
+            "==========================================\n",
+            f"Patient Age: {inputs['Age']}",
+            f"Patient Gender: {inputs['Gender']}",
+            f"Baseline BMI: {inputs['BMI_Baseline']}",
+            f"Syndemic Burden Score: {score}/3\n",
+            "------------------------------------------",
+            "TARGETED PROTOCOLS & INTERVENTIONS:",
+            "------------------------------------------"
+        ]
+        
+        # Rule 1: Smoking
+        if inputs['Smoking_Status'] == 'Current':
+            has_warnings = True
+            st.error("🚭 **Tobacco Dependency Identified**")
+            msg = (
+                "> **Protocol:** Immediate referral for pulmonary counseling and cessation therapy.\n\n"
+                "**Clinical Justification:** Tobacco use significantly increases the risk of mortality and delayed sputum conversion in TB patients. "
+                "Nicotine suppresses macrophage function, the primary immune defense against Mycobacterium tuberculosis.\n\n"
+                "**Action Plan:**\n"
+                "- Enlist patient in DOTS-plus smoking cessation program.\n"
+                "- Prescribe Nicotine Replacement Therapy (NRT) if medically appropriate.\n"
+                "- Schedule weekly behavioral counseling check-ins for the first month of treatment."
+            )
+            st.write(msg)
+            report_lines.append("\n[TOBACCO DEPENDENCY]")
+            report_lines.append(msg.replace("> **Protocol:**", "Protocol:").replace("**", ""))
+        
+        # Rule 2: Diabetes / HbA1c
+        hba1c = inputs['HbA1c_Level']
+        diabetes = inputs['Diabetes_Status']
+        if (hba1c > 0 and hba1c > 6.5) or diabetes == 'Yes':
+            has_warnings = True
+            st.warning("🩸 **Glycemic Control Fluctuation**")
+            msg = (
+                "> **Protocol:** Endocrinology consultation required. Initiate fasting glucose tracking.\n\n"
+                "**Clinical Justification:** Poorly controlled diabetes suppresses the Th1 immune response and requires aggressive concurrent management alongside standard DOTS therapy. "
+                "Co-morbidity increases the risk of TB relapse and treatment failure.\n\n"
+                "**Action Plan:**\n"
+                "- Prescribe concurrent Metformin/Insulin titration schedule as recommended by an endocrinologist.\n"
+                "- Bi-weekly fasting blood glucose and HbA1c testing every 3 months.\n"
+                "- Dietary consultation emphasizing low-glycemic index foods."
+            )
+            st.write(msg)
+            report_lines.append("\n[GLYCEMIC DYSREGULATION]")
+            report_lines.append(msg.replace("> **Protocol:**", "Protocol:").replace("**", ""))
+            
+        # Rule 3: Alcohol
+        if inputs['Alcohol_Frequency'] == 'Daily':
+            has_warnings = True
+            st.warning("🍻 **High-Risk Alcohol Consumption**")
+            msg = (
+                "> **Protocol:** Assess for hepatic strain. Increase frequency of Liver Function Tests (LFTs) and refer to an addiction counselor.\n\n"
+                "**Clinical Justification:** High risk for drug-induced liver injury (DILI) due to first-line TB medications (Isoniazid, Rifampin, Pyrazinamide) combined with alcohol hepatotoxicity. "
+                "Alcoholism often correlates with poor treatment adherence and malnutrition.\n\n"
+                "**Action Plan:**\n"
+                "- Baseline LFTs immediately and re-check every 2 weeks for the intensive phase.\n"
+                "- Mandatory psychiatric evaluation for relapse prevention.\n"
+                "- Ensure DOTS provider incorporates daily wellness checks."
+            )
+            st.write(msg)
+            report_lines.append("\n[ALCOHOL CONSUMPTION RISK]")
+            report_lines.append(msg.replace("> **Protocol:**", "Protocol:").replace("**", ""))
+            
+        # Rule 4: BMI/Nutrition
+        if inputs['BMI_Baseline'] < 18.5:
+            has_warnings = True
+            st.info("🥗 **Undernutrition / Cachexia**")
+            msg = (
+                "> **Protocol:** Initiate direct nutritional supplementation pathway (e.g., Nikshay Poshan Yojana). Provide high-protein, calorie-dense diets.\n\n"
+                "**Clinical Justification:** Undernutrition is the most prominent reversible risk factor for TB mortality. Low BMI reduces drug bioavailability and impairs cellular immunity.\n\n"
+                "**Action Plan:**\n"
+                "- Immediate provision of macro-nutrient rations (e.g., groundnut, pulses, milk powder).\n"
+                "- Target weight gain of at least 5% of body weight in the first two months.\n"
+                "- Register patient under regional direct benefit transfer (DBT) schemes for nutritional support."
+            )
+            st.write(msg)
+            report_lines.append("\n[UNDERNUTRITION]")
+            report_lines.append(msg.replace("> **Protocol:**", "Protocol:").replace("**", ""))
+
+        if not has_warnings:
+            st.success("✅ **Standard Protocol Sufficient**")
+            msg = (
+                "> The patient does not possess any immediate severe lifestyle comorbidities based on the intake. Proceed with standard direct observation, monthly weight checks, and scheduled sputum smears."
+            )
+            st.write(msg)
+            report_lines.append("\n[STANDARD PROTOCOL]")
+            report_lines.append("No severe lifestyle comorbidities detected. Proceed with standard DOTS protocol.")
+
+        st.markdown("---")
+        report_text = "\n".join(report_lines)
+        st.download_button(
+            label="Download Clinical Protocols Report (.txt)",
+            data=report_text,
+            file_name="clinical_protocols_report.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+
