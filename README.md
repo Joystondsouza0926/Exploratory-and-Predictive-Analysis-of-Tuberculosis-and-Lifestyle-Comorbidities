@@ -10,7 +10,7 @@ A Streamlit-based clinical decision support tool that predicts TB treatment outc
 
 ## 📋 Features
 
-- **Single Patient Triage** — Enter patient demographics and comorbidity data to get an instant TB treatment outcome prediction with confidence score
+- **Single Patient Triage** — Enter patient demographics and comorbidity data to get an instant TB treatment outcome prediction with confidence score and download the individual triage report as a CSV
 - **All Patient Records Table** — Every submitted patient is logged with a unique ID (TB-0001, TB-0002, …) and displayed in a persistent table with per-row **📄 Clinical Protocols Report** download
 - **Batch Prediction Upload** — Upload a CSV or Excel file to run bulk predictions on multiple patients at once
 - **Interactive EDA** — Visualise the training dataset with:
@@ -73,7 +73,7 @@ The batch CSV/Excel file must contain these columns:
 
 | Column | Values |
 |---|---|
-| `Age` | Integer (1–100) |
+| `Age` | Integer (15–90) |
 | `Gender` | Male / Female / Transgender/Other |
 | `Residence` | Rural / Urban / Slum |
 | `BMI_Baseline` | Float |

@@ -248,6 +248,7 @@ def preprocess_batch(df_input):
 
 
 # --- Sidebar Navigation ---
+st.sidebar.image("Molbio w tagline. JPG.jpg", use_container_width=True)
 st.sidebar.title("TB Risk Predictor")
 st.sidebar.caption("👨‍💻 Developed by **Joyston Jose D'souza**")
 st.sidebar.markdown("---")
@@ -288,12 +289,13 @@ if page == "Clinical Triage":
             
             with col1:
                 st.markdown("### Demographic details")
-                age = st.number_input("Age (Years) *", min_value=1, max_value=100, value=None, placeholder="Required")
+                age = st.number_input("Age (Years) *", min_value=15, max_value=90, value=None, placeholder="Required")
                 gender = st.selectbox("Gender", ["Male", "Female", "Transgender/Other"])
                 residence = st.selectbox("Residence Type", ["Rural", "Urban", "Slum"])
                 
                 st.markdown("### Clinical Baseline")
                 bmi = st.slider("Baseline BMI", min_value=10.0, max_value=50.0, value=20.5, step=0.1)
+                st.caption("ℹ️ **Body Mass Index (BMI)**: A measure of body fat based on height and weight. BMI < 18.5 indicates undernutrition, which is a major risk factor for TB.")
                 
             with col2:
                 st.markdown("### Syndemic Factors (Comorbidities)")
