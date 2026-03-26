@@ -434,7 +434,7 @@ if page == "Clinical Triage":
             """Generate a clinical protocols report text for a given patient record row."""
             lines = [
                 "==========================================",
-                "   NTEP SMART PREDICTOR CLINICAL REPORT   ",
+                "     SMART PREDICTOR CLINICAL REPORT   ",
                 f"   Patient ID: {row.get('Patient_ID', 'N/A')}",
                 "==========================================\n",
                 f"Patient Age: {row.get('Age', 'N/A')}",
